@@ -1,15 +1,13 @@
 package de.vinabi.styles;
 
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.RenderPipelines;
+import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.gui.Click;
 import net.minecraft.client.input.KeyInput;
-import net.minecraft.client.sound.PositionedSoundInstance;
 import net.minecraft.resource.ResourcePackManager;
-import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
@@ -90,15 +88,23 @@ public class StylesScreen extends Screen {
         ResourcePackManager m = mc.getResourcePackManager();
         List<String> enabled = new ArrayList<>(m.getEnabledIds());
         enabled.removeIf(Styles::isOurs);
+        List<String> ours = new ArrayList<>();
         for (Styles.Category c : Styles.CATEGORIES) {
             int idx = pending.getOrDefault(c.id(), -1);
             if (idx >= 0) {
                 String id = Styles.findProfileId(m, c, Styles.STYLES.get(idx));
-                if (id != null) enabled.add(id);
+                if (id != null) {
+                    enabled.add(id);
+                    ours.add(id);
+                }
             }
         }
         m.setEnabledProfiles(enabled);
-        mc.options.refreshResourcePacks(m); // speichert + lädt Ressourcen neu, falls geändert
+        // Auswahl dauerhaft speichern (options.txt), dann Ressourcen neu laden
+        mc.options.resourcePacks.removeIf(Styles::isOurs);
+        mc.options.resourcePacks.addAll(ours);
+        mc.options.write();
+        mc.reloadResources();
         applied.clear();
         applied.putAll(pending);
     }
@@ -136,15 +142,46 @@ public class StylesScreen extends Screen {
         return (a << 24) | (argb & 0xFFFFFF);
     }
 
+    // ------------------------------------------------------------ zeichnen (nur einfache, stabile Methoden)
+    private static void border(DrawContext c, int x, int y, int w, int h, int col) {
+        c.fill(x, y, x + w, y + 1, col);
+        c.fill(x, y + h - 1, x + w, y + h, col);
+        c.fill(x, y, x + 1, y + h, col);
+        c.fill(x + w - 1, y, x + w, y + h, col);
+    }
+
+    private void text(DrawContext c, String s, int x, int y, int col) {
+        c.drawText(textRenderer, s, x, y, col, true);
+    }
+
+    private void centered(DrawContext c, String s, int cx, int y, int col) {
+        text(c, s, cx - textRenderer.getWidth(s) / 2, y, col);
+    }
+
+    /** 16x16-Textur, skaliert auf size x size (size = Vielfaches von 16 sieht am schärfsten aus). */
+    private static void icon(DrawContext c, Identifier id, int x, int y, int size) {
+        float k = size / 16f;
+        var m = c.getMatrices();
+        m.pushMatrix();
+        m.translate((float) x, (float) y);
+        m.scale(k, k);
+        c.drawTexture(RenderPipelines.GUI_TEXTURED, id, 0, 0, 0f, 0f, 16, 16, 16, 16);
+        m.popMatrix();
+    }
+
     // ------------------------------------------------------------ render
     @Override
     public void render(DrawContext ctx, int mx, int my, float delta) {
-        ctx.fillGradient(0, 0, width, height, 0xE0080812, 0xE0160A28);
+        for (int y = 0; y < height; y += 4) {
+            float t = y / (float) height;
+            int r = (int) (8 + 14 * t), g = (int) (8 + 2 * t), b = (int) (18 + 22 * t);
+            ctx.fill(0, y, width, Math.min(height, y + 4), 0xE0000000 | (r << 16) | (g << 8) | b);
+        }
         ctx.fill(px, py, px + pw, py + ph, 0xF00E0E1C);
-        ctx.drawBorder(px, py, pw, ph, 0xFF2A2A44);
+        border(ctx, px, py, pw, ph, 0xFF2A2A44);
 
         // Titel + Farbleiste
-        ctx.drawTextWithShadow(textRenderer, "VinAbi Styles", px + 12, py + 10, 0xFFFFFFFF);
+        text(ctx, "VinAbi Styles", px + 12, py + 10, 0xFFFFFFFF);
         int seg = pw / Styles.STYLES.size();
         for (int i = 0; i < Styles.STYLES.size(); i++) {
             ctx.fill(px + i * seg, py + 26, px + (i + 1) * seg, py + 28, Styles.STYLES.get(i).color());
@@ -152,7 +189,7 @@ public class StylesScreen extends Screen {
         int ch = changes();
         if (ch > 0) {
             String t = ch + (ch == 1 ? " Änderung – Anwenden drücken" : " Änderungen – Anwenden drücken");
-            ctx.drawTextWithShadow(textRenderer, t, px + pw - textRenderer.getWidth(t) - 12, py + 10, 0xFFFFD166);
+            text(ctx, t, px + pw - textRenderer.getWidth(t) - 12, py + 10, 0xFFFFD166);
         }
 
         // Sidebar
@@ -169,22 +206,21 @@ public class StylesScreen extends Screen {
             } else if (hover) {
                 ctx.fill(r[0], r[1], r[0] + r[2], r[1] + r[3], 0x33FFFFFF);
             }
-            int icon = Math.min(16, r[3] - 2);
+            int ic = 16;
+            int iy = r[1] + (r[3] - ic) / 2;
             if (idx >= 0) {
-                ctx.drawTexture(RenderPipelines.GUI_TEXTURED, preview(c, Styles.STYLES.get(idx)),
-                        r[0] + 5, r[1] + (r[3] - icon) / 2, 0f, 0f, icon, icon, 16, 16, 16, 16);
+                icon(ctx, preview(c, Styles.STYLES.get(idx)), r[0] + 5, iy, ic);
             } else {
-                ctx.fill(r[0] + 5, r[1] + (r[3] - icon) / 2, r[0] + 5 + icon, r[1] + (r[3] - icon) / 2 + icon, 0xFF2C2C3C);
+                ctx.fill(r[0] + 5, iy + 2, r[0] + 5 + ic, iy + ic - 2, 0xFF2C2C3C);
             }
-            ctx.drawTextWithShadow(textRenderer, c.label(), r[0] + 9 + icon,
-                    r[1] + (r[3] - 8) / 2, sel ? 0xFFFFFFFF : 0xFFB8B8CC);
+            text(ctx, c.label(), r[0] + 9 + ic, r[1] + (r[3] - 8) / 2, sel ? 0xFFFFFFFF : 0xFFB8B8CC);
             if (idx >= 0) ctx.fill(r[0] + r[2] - 7, r[1] + r[3] / 2 - 2, r[0] + r[2] - 3, r[1] + r[3] / 2 + 2, accent);
         }
 
         // Karten
         Styles.Category cat = Styles.CATEGORIES.get(selCat);
         int rx = px + SIDE_W + 10;
-        ctx.drawTextWithShadow(textRenderer, cat.label() + " – Style wählen", rx, py + 34 - 12 + 0, 0xFFE8E8FF);
+        text(ctx, cat.label() + " – Style wählen", rx, py + 34 - 12, 0xFFE8E8FF);
         int selected = pending.getOrDefault(cat.id(), -1);
         int live = applied.getOrDefault(cat.id(), -1);
         double pulse = 0.65 + 0.35 * Math.sin(Util.getMeasuringTimeMs() / 260.0);
@@ -199,27 +235,25 @@ public class StylesScreen extends Screen {
             if (sel) {
                 ctx.fill(r[0], r[1], r[0] + r[2], r[1] + r[3], withAlpha(accent, 0x30));
                 int a = (int) (0xFF * pulse);
-                ctx.drawBorder(r[0], r[1], r[2], r[3], withAlpha(accent, a));
-                ctx.drawBorder(r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2, withAlpha(accent, a / 2));
+                border(ctx, r[0], r[1], r[2], r[3], withAlpha(accent, a));
+                border(ctx, r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2, withAlpha(accent, a / 2));
             } else {
-                ctx.drawBorder(r[0], r[1], r[2], r[3], hover ? 0xFF5A5A80 : 0xFF2A2A44);
+                border(ctx, r[0], r[1], r[2], r[3], hover ? 0xFF5A5A80 : 0xFF2A2A44);
             }
 
-            int size = Math.max(16, Math.min(Math.min(r[3] - 28, r[2] - 16), 40));
-            int ix = r[0] + (r[2] - size) / 2, iy = r[1] + 8;
+            int size = (r[3] - 26 >= 32 && r[2] - 16 >= 32) ? 32 : 16;
+            int ix = r[0] + (r[2] - size) / 2, iy = r[1] + 6;
             if (styleIdx >= 0) {
-                ctx.drawTexture(RenderPipelines.GUI_TEXTURED, preview(cat, Styles.STYLES.get(styleIdx)),
-                        ix, iy, 0f, 0f, size, size, 16, 16, 16, 16);
+                icon(ctx, preview(cat, Styles.STYLES.get(styleIdx)), ix, iy, size);
             } else {
                 ctx.fill(ix, iy, ix + size, iy + size, 0xFF2C2C3C);
-                ctx.drawBorder(ix, iy, size, size, 0xFF55556E);
-                ctx.drawCenteredTextWithShadow(textRenderer, "MC", ix + size / 2, iy + size / 2 - 4, 0xFF8A8AA0);
+                border(ctx, ix, iy, size, size, 0xFF55556E);
+                centered(ctx, "MC", ix + size / 2, iy + size / 2 - 4, 0xFF8A8AA0);
             }
             String label = styleIdx >= 0 ? Styles.STYLES.get(styleIdx).label() : "Vanilla";
-            ctx.drawCenteredTextWithShadow(textRenderer, label, r[0] + r[2] / 2, r[1] + r[3] - 13,
-                    sel ? 0xFFFFFFFF : accent);
+            centered(ctx, label, r[0] + r[2] / 2, r[1] + r[3] - 13, sel ? 0xFFFFFFFF : accent);
             if (styleIdx == live) {
-                ctx.drawTextWithShadow(textRenderer, "aktiv", r[0] + 4, r[1] + 4, 0xFF6BFF8A);
+                text(ctx, "aktiv", r[0] + 4, r[1] + 4, 0xFF6BFF8A);
             }
         }
 
@@ -234,14 +268,12 @@ public class StylesScreen extends Screen {
             for (int i = 0; i < Styles.CATEGORIES.size(); i++) {
                 if (in(rowRect(i), mx, my)) {
                     selCat = i;
-                    click();
                     return true;
                 }
             }
             for (int j = 0; j <= Styles.STYLES.size(); j++) {
                 if (in(cardRect(j), mx, my)) {
                     pending.put(Styles.CATEGORIES.get(selCat).id(), j - 1);
-                    click();
                     return true;
                 }
             }
@@ -262,10 +294,5 @@ public class StylesScreen extends Screen {
             return true;
         }
         return super.keyPressed(input);
-    }
-
-    private void click() {
-        MinecraftClient.getInstance().getSoundManager()
-                .play(PositionedSoundInstance.master(SoundEvents.UI_BUTTON_CLICK, 1.0f));
     }
 }
