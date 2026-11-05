@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "vinabistyles",
+  "version": "${version}",
+  "name": "VinAbi Styles",
+  "description": "Drücke Rechts-Shift und wähle deine PvP-Texturen: Mace, Crystal, Obsidian, Wind Charge, Perlen, Cobweb, Rüstung, Shield, Anchor, Glowstone, Glint, Totem, XP.",
+  "authors": ["Vin"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": { "client": ["de.vinabi.styles.VinAbiStylesClient"] },
+  "depends": {
+    "fabricloader": ">=0.18.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
